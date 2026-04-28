@@ -71,7 +71,10 @@ echo "[cycle5_grade] $SUMMARY"
 echo "[cycle5_grade] report=$REPORT  json=$JSON_OUT"
 
 if [[ "$NO_BRIDGE" == "0" ]]; then
+  # Post both topics for backwards compat: l4_result (legacy) + l4_verdict (CC0 22:55Z directive)
   python3 "${HOME}/AGENT/comms/bridge.py" post --from claude-cc6 --topic l4_result \
+    --body "$SUMMARY" || true
+  python3 "${HOME}/AGENT/comms/bridge.py" post --from claude-cc6 --topic l4_verdict \
     --body "$SUMMARY" || true
 fi
 
