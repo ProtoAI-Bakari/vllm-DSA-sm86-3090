@@ -70,10 +70,17 @@ echo "[baseline_capture] remaining=$N_REMAIN"
 
 T0=$(date +%s)
 echo "[baseline_capture] starting at $(date)"
-# xargs -P CONC: each child reads its single line on stdin
-cat "$REMAINING" | xargs -L 1 -P "$CONC" -I '{}' bash -c '
-  echo "{}" | python3 "'"$HERE"'/capture_one.py"
-'
+# Split into CONC chunks and stream each into its own capture_one.py — avoids
+# xargs command-line-too-long on JSONL with embedded quotes.
+CHUNK_DIR=$(mktemp -d -t cc6_baseline_chunks_XXXX)
+trap 'rm -rf "$CHUNK_DIR" "$REMAINING"' EXIT
+split -n "l/$CONC" "$REMAINING" "$CHUNK_DIR/part_" 2>/dev/null || \
+  split -l "$(( ($(wc -l < "$REMAINING") + CONC - 1) / CONC ))" "$REMAINING" "$CHUNK_DIR/part_"
+for part in "$CHUNK_DIR"/part_*; do
+  [[ -s "$part" ]] || continue
+  python3 "$HERE/capture_one.py" < "$part" &
+done
+wait
 
 T1=$(date +%s)
 ELAPSED=$((T1-T0))
