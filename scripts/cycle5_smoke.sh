@@ -18,7 +18,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
-FIXTURES="${HOME}/AGENT/tools/cc6_fixtures.json"
+FIXTURES="${CC6_FIXTURES:-${HOME}/AGENT/tools/cc6_fixtures.json}"   # CC6_FIXTURES env override → cc6_fixtures_25.json for richer L4 signal
 BASELINE="${REPO}/tests/correctness/baseline.jsonl"
 
 INTEG=""
