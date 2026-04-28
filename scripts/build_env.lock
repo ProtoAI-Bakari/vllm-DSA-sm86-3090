@@ -1,0 +1,57 @@
+# build_env.lock — Authoritative pinned environment for vllm-DSA-sm86 reproducible builds.
+# Authored by ProtoAI-Bakari, with Assistance by Claude Opus 4.7 (claude-opus-4-7) [1M ctx, max effort, agent: CC2]
+#
+# Format: KEY=VALUE pairs, one per line, # for comments. Consumed by scripts/verify_env.sh.
+# Updates land via cc_git on lane-cc2-build only after CC0 approval (build_env shifts are L4 events).
+
+# === target hardware ===
+gpu_arch=8.6
+gpu_arch_name=Ampere
+gpu_target=NVIDIA_GeForce_RTX_3090
+
+# === toolchain ===
+cuda_home=/usr/local/cuda-12.8
+cuda_version=12.8
+nvcc_min=12.8.0
+gcc_min=11.4.0
+cmake_min=3.26.0
+ninja_min=1.10.0
+
+# === vllm + python deps (must match deployed .venv-vllm_0_20_0_fresh canonical fleet venv) ===
+python_version=3.12
+vllm_version=0.20.0
+vllm_sha=101584af0
+torch_version=2.10.0+cu128
+torch_index_url=https://download.pytorch.org/whl/cu128
+ray_version=2.54.0
+triton_version_floor=3.4.0
+flashinfer_min=0.2.0
+
+# === bootstrap python (proven-working interpreter for venv creation) ===
+bootstrap_python=/home/z/.venv-vllm_pr40760_shaaa114601_torch2.10.0_cu128_ray2.54.0_py3.12_dsv4/bin/python3.12
+
+# === build env vars ===
+torch_cuda_arch_list=8.6
+vllm_target_device=cuda
+max_jobs_default=32
+
+# === patches at vendor + sp layer ===
+vendor_patches=patch_vllm_ue8m0_preconvert.sh,patch_vllm_w8a8_bf16_fallback.sh
+sp_patches=patch_triton_ue8m0_dict.sh
+patches_dir=/repo/INSTALLERS
+
+# === cache ===
+ccache_dir_default=/repo/cache/ccache_vllm_dsa_sm86
+ccache_maxsize_default=50G
+sccache_dir_default=/repo/cache/sccache_vllm_dsa_sm86
+
+# === reproducibility ===
+deterministic=1
+pythonhashseed=0
+source_date_epoch=auto    # derived from vendor SHA commit time when available
+
+# === artifacts ===
+src_dir=/repo/INSTALLERS/vllm.dsa.sm86/vllm-source
+wheel_dir=/repo/wheels/vllm.dsa.sm86
+venv_baseline=.venv-vllm_dsa_sm86_baseline
+manifest_path_in_venv=.cc2_build_manifest.txt
