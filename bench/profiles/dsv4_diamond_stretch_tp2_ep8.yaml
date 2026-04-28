@@ -1,0 +1,119 @@
+# --ProtoAI-Bakari--
+# Flight-deck profile: dsv4-diamond-stretch-tp2-ep8
+# Target: full EPIC 4 stack — INT4 + MTP + INT8 KV + EPLB + fused-MoE + EAGLE-3
+# speculative decode. Pre-author for the Diamond conc=1 (75 t/s) z-stated target.
+# Aspirational: requires CC4 fused-MoE port + CC5 EPLB integration + draft model
+# wire-up. NOT runnable until all upstream stories ship. Profile exists so deploy
+# can ship-day flip the moment everything aligns.
+profile_name: dsv4-diamond-stretch-tp2-ep8
+
+model:
+  hf_id: deepseek-ai/DeepSeek-V4-Flash-AWQ-INT4
+  arch: deepseek-v4
+  experts_total: 256
+  experts_active: 8
+  quant: int4_awq
+  quant_method: marlin
+  approx_weight_gib: 68
+  speculative:
+    method: eagle3                      # EAGLE-3 draft head (separate model)
+    draft_model: deepseek-ai/DeepSeek-V4-Flash-EAGLE3-Draft
+    num_speculative_tokens: 8           # eagle3 supports deeper lookahead
+    target_acceptance_rate: 0.75
+    fallback_method: mtp                # if eagle3 unavailable, use MTP
+
+parallelism:
+  tensor_parallel_size: 2
+  expert_parallel_size: 8
+  pipeline_parallel_size: 1
+  data_parallel_size: 1
+  total_ranks: 16
+  expert_load_balancer: eplb            # keep all 8 experts hot under bursty traffic
+  eplb_skew_threshold: 0.10             # rebalance if >10% expert-load skew
+
+parallel_path:
+  fused_moe_kernels: sm86_backport      # CC4 lane delivers (post-EPIC 3.2)
+  rocev2_p2p_patch: enabled             # AO2 driver patch (cluster-side)
+
+server:
+  port: 8000
+  host: 0.0.0.0
+  served_model_name: dsv4-diamond
+
+kv_cache:
+  dtype: int8
+  block_size: 16
+  swap_space_gib: 0
+  scaling_factor: dynamic
+
+memory:
+  gpu_memory_utilization: 0.92
+  max_model_len: 65536
+  max_num_seqs: 512
+  max_num_batched_tokens: 16384         # larger batch with int8 KV slot expansion
+
+attention:
+  prefix_cache: true
+  enable_chunked_prefill: true
+  sparse_attn_indexer: enabled
+  mla_sparse: enabled
+  fused_attention_bias: enabled         # EPIC 4.3 candidate optimization
+
+nodes:
+  layout: zccx_8x2
+  hosts: [cuda1, cuda2, cuda3, cuda4, cuda5, cuda6, cuda7, cuda8]
+  per_node_gpus: 2
+  cordon_unwanted: true
+  gid_index_normalize: true
+
+nccl:
+  debug: INFO
+  socket_ifname: bond0
+  ib_disable: 0
+  ib_gid_index: 3
+  p2p_disable: 0
+  net_gdr_level: 5
+  rocev2_tuning: aggressive             # post EPIC 4 fabric tuning
+
+env:
+  VLLM_USE_DEEP_GEMM: "0"
+  VLLM_USE_TRITON_FLASH_ATTN: "1"
+  VLLM_MARLIN_SM86: "1"
+  VLLM_USE_SPEC_DECODE: "1"
+  VLLM_SPEC_DECODE_NUM_LOOKAHEAD: "8"
+  VLLM_KV_CACHE_DTYPE: "int8"
+  VLLM_USE_EPLB: "1"
+  VLLM_USE_FUSED_MOE: "1"
+  VLLM_FUSED_ATTN_BIAS: "1"
+  VLLM_ATTENTION_BACKEND: ""
+  CUDA_DEVICE_MAX_CONNECTIONS: "32"
+  TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
+
+acceptance:
+  conc1_target_tier: diamond            # 75 t/s (z-stated dream target)
+  agg_target_conc4_tier: platinum       # 700+
+  agg_stretch_tier: diamond_or_cosmic   # 900+ / 1000+
+  perplexity_drift_max_vs_int8_kv_baseline: 0.005
+  eplb_load_skew_max: 0.10              # ≤10% expert-load skew during sustained traffic
+  identical_tokens_temp0_speculative_on_vs_off: true
+
+bench:
+  conc_sweep: [1, 2, 4, 8, 16, 32, 64, 128]
+  drain_between_conc: true
+  capture_nccl_fabric: true
+  capture_per_gpu_util: true
+  capture_kv_metrics: true
+  capture_mtp_acceptance_rate: true
+  capture_eplb_skew: true
+  output_dir: /Users/z/AGENT/bench_dsv4_diamond_stretch
+
+artifact_out: /Users/z/AGENT/comms/PATH_A_FINAL_RESULTS_<datetime>.md
+
+dependencies:
+  blocked_on:
+    - epic_3_2_int4_mtp_int8kv_pass
+    - cc4_fused_moe_sm86_backport
+    - cc5_eplb_integration
+    - eagle3_draft_model_available
+    - cluster_p2p_driver_patch_landed
+    - cluster_rocev2_aggressive_tuning_validated
