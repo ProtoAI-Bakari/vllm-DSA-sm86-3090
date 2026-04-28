@@ -163,8 +163,34 @@ def reference_marlin_int4_gemm(
     return (x_bf16.float() @ w).to(x_bf16.dtype)
 
 
+def reference_sparse_attn_indexer_logits(
+    q: torch.Tensor,
+    k_cache: torch.Tensor,
+    block_size: int = 64,
+    scale: float | None = None,
+) -> torch.Tensor:
+    """CPU reference for sparse_attn_indexer_sm86.cu BLOCK-SCORE LOGITS output.
+    Per (batch, head, query, key_block) = sum over (k_in_block, d) of q[d]*k[blk,k,d]*scale.
+    Returns [B, H, T_q, n_blocks] fp32 — matches the kernel's block_scores buffer.
+    """
+    if scale is None:
+        scale = 1.0 / math.sqrt(q.shape[-1])
+    q = q.float()
+    k = k_cache.float()
+    B, H, T_q, D = q.shape
+    _, T_k, _ = k.shape
+    n_blocks = (T_k + block_size - 1) // block_size
+    pad = n_blocks * block_size - T_k
+    if pad:
+        k = F.pad(k, (0, 0, 0, pad), value=0.0)
+    k_blk = k.view(B, n_blocks, block_size, D)
+    block_scores = torch.einsum("bhqd,bnkd->bhqn", q, k_blk) * scale
+    return block_scores.float()
+
+
 REFERENCES = {
     "sparse_attn_indexer": reference_sparse_attn_indexer,
+    "sparse_attn_indexer_logits": reference_sparse_attn_indexer_logits,
     "mla_decode": reference_mla_decode,
     "compressor": reference_compressor,
     "swa": reference_swa,
