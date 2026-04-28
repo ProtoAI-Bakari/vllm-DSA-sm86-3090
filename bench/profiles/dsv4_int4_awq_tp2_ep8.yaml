@@ -1,0 +1,102 @@
+# --ProtoAI-Bakari--
+# Flight-deck profile: dsv4-int4-awq-marlin-tp2-ep8
+# Target: DeepSeek-V4-Flash quantized to INT4-AWQ, MARLIN sm_86 GEMM kernels.
+# Pre-author for EPIC 3.1 — fires when CC5 lane-cc5-moe-dsa AWQ-Marlin probe
+# yields valid weights + numerics gate ≤2% perplexity drop vs BF16 baseline.
+# Topology: TP=2 within node, EP=8 across nodes (same as BF16 emul profile).
+#
+# Realistic perf target (corpus §8.2 + §3.1 INT4 math):
+#   conc=1: 35-50 t/s (Silver)
+#   agg conc=4: 200-300 t/s (Silver)
+#   stretch with MTP: conc=1 50-70 (Gold), agg 250-450 (Silver-Gold)
+profile_name: dsv4-int4-awq-marlin-tp2-ep8
+
+model:
+  hf_id: deepseek-ai/DeepSeek-V4-Flash-AWQ-INT4
+  arch: deepseek-v4
+  experts_total: 256
+  experts_active: 8
+  quant: int4_awq
+  quant_method: marlin
+  approx_weight_gib: 68
+  awq_calib:
+    set: cc6_1500_prompt_fixed_seed
+    blocks_per_expert: true
+
+parallelism:
+  tensor_parallel_size: 2
+  expert_parallel_size: 8
+  pipeline_parallel_size: 1
+  data_parallel_size: 1
+  total_ranks: 16
+
+server:
+  port: 8000
+  host: 0.0.0.0
+  served_model_name: dsv4-int4-awq
+
+kv_cache:
+  dtype: fp8
+  block_size: 16
+  swap_space_gib: 0
+
+memory:
+  gpu_memory_utilization: 0.90
+  max_model_len: 32768
+  max_num_seqs: 256
+  max_num_batched_tokens: 8192
+
+attention:
+  prefix_cache: true
+  enable_chunked_prefill: true
+  sparse_attn_indexer: enabled
+  mla_sparse: enabled
+
+nodes:
+  layout: zccx_8x2
+  hosts: [cuda1, cuda2, cuda3, cuda4, cuda5, cuda6, cuda7, cuda8]
+  per_node_gpus: 2
+  cordon_unwanted: true
+  gid_index_normalize: true
+
+nccl:
+  debug: INFO
+  socket_ifname: bond0
+  ib_disable: 0
+  ib_gid_index: 3
+  p2p_disable: 0
+  net_gdr_level: 5
+
+env:
+  VLLM_USE_DEEP_GEMM: "0"
+  VLLM_USE_TRITON_FLASH_ATTN: "1"
+  VLLM_MARLIN_SM86: "1"
+  VLLM_ATTENTION_BACKEND: ""
+  CUDA_DEVICE_MAX_CONNECTIONS: "32"
+  TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
+
+acceptance:
+  conc1_target_tier: silver
+  conc1_stretch_tier: gold
+  agg_target_conc4_tier: silver
+  top1_agreement_vs_bf16: 0.98
+  cosine_min: 0.97
+  perplexity_drift_max: 0.02
+
+bench:
+  conc_sweep: [1, 2, 4, 8, 16, 32]
+  drain_between_conc: true
+  capture_nccl_fabric: true
+  capture_per_gpu_util: true
+  capture_kv_metrics: true
+  output_dir: /Users/z/AGENT/bench_dsv4_int4_awq_tp2_ep8
+
+artifact_out: /Users/z/AGENT/comms/PATH_A_FINAL_RESULTS_<datetime>.md
+
+dependencies:
+  blocked_on:
+    - cc3_sparse_attn_indexer_sm86
+    - cc4_lightning_bundle_sm86
+    - cc5_int4_awq_marlin_sm86_calibrated_weights
+    - cc6_correctness_gate_pass_vs_bf16
+    - cc7_cluster_fanout
