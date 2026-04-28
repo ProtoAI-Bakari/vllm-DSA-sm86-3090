@@ -97,3 +97,21 @@ def test_marlin_int4_gemm_in_chain(vllm_module, kernels, device):
     inp = {k: v.to(device) for k, v in fix["inputs"].items()}
     out = fn(**inp, **fix["kwargs"])
     assert_close(out, fix["expected"], rtol=5e-2, atol=5e-2, name="marlin_int4_gemm_l2")
+
+
+# ---------- paged_attn_hd512 (CC3 — vLLM PR #38835 head_dim=512 paged attention) ----------
+def test_paged_attn_hd512_in_chain(vllm_module, kernels, device):
+    """L2 forward-slice for DSV4-Flash-FP8 / GLM-5.1 head_dim=512 paged-KV
+    attention. Validates CC3's paged_attn_hd512_sm86 kernel matches the CPU
+    reference when invoked via vLLM's call chain (not just isolated)."""
+    fix = load_l1_fixture("paged_attn_hd512")
+    fn = (
+        getattr(kernels, "paged_attn_hd512_sm86", None)
+        or getattr(kernels, "paged_attention_hd512", None)
+        or getattr(kernels, "paged_attn_hd512", None)
+    )
+    if fn is None:
+        pytest.skip("paged_attn_hd512 kernel not exported (CC3 lane in flight)")
+    inp = {k: v.to(device) for k, v in fix["inputs"].items()}
+    out = fn(**inp, **fix["kwargs"])
+    assert_close(out, fix["expected"], rtol=2e-2, atol=2e-2, name="paged_attn_hd512_l2")
