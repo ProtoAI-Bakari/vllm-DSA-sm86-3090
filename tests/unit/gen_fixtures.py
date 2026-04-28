@@ -24,6 +24,7 @@ from tests.correctness.cpu_reference import (
     reference_compressor,
     reference_swa,
     reference_marlin_int4_gemm,
+    reference_paged_attn_hd512,
 )
 
 
@@ -86,12 +87,34 @@ def gen_marlin_int4_gemm():
             "expected": expected, "kwargs": {"group_size": group_size}}
 
 
+def gen_paged_attn_hd512():
+    # DSV4-Flash-FP8 case: head_dim=512, GQA group ratio = H_q/H_kv
+    # Use small dims for fixture speed but real head_dim=512.
+    B, H_q, H_kv = 2, 8, 2
+    D = 512
+    block_size = 16
+    num_blocks = 32
+    seq_len = 64
+    q = torch.randn(B, H_q, 1, D, dtype=torch.bfloat16) * 0.1
+    kv = torch.randn(num_blocks, block_size, 2, H_kv, D, dtype=torch.bfloat16) * 0.1
+    n_blocks_per_seq = (seq_len + block_size - 1) // block_size
+    block_table = torch.zeros(B, n_blocks_per_seq, dtype=torch.int32)
+    for bi in range(B):
+        for bk in range(n_blocks_per_seq):
+            block_table[bi, bk] = bi * n_blocks_per_seq + bk
+    seq_lens = torch.tensor([seq_len] * B, dtype=torch.int32)
+    expected = reference_paged_attn_hd512(q, kv, block_table, seq_lens, block_size=block_size)
+    return {"inputs": {"q": q, "kv_cache": kv, "block_table": block_table, "seq_lens": seq_lens},
+            "expected": expected, "kwargs": {"block_size": block_size}}
+
+
 GENERATORS = {
     "sparse_attn_indexer": gen_sparse_attn_indexer,
     "mla_decode": gen_mla_decode,
     "compressor": gen_compressor,
     "swa": gen_swa,
     "marlin_int4_gemm": gen_marlin_int4_gemm,
+    "paged_attn_hd512": gen_paged_attn_hd512,
 }
 
 

@@ -104,3 +104,20 @@ def test_marlin_int4_gemm(kernels, device):
         pytest.skip("marlin_int4_gemm not exported")
     out = fn(**inp, **fix["kwargs"])
     assert_close(out, fix["expected"], rtol=5e-2, atol=5e-2, name="marlin_int4_gemm")
+
+
+# ---------- paged_attn_hd512 (CC3 — vLLM PR #38835 head_dim=512 paged attention) ----------
+def test_paged_attn_hd512(kernels, device):
+    """Tracks PR #38835 — DSV4-Flash-FP8 / GLM-5.1 head_dim=512 paged-KV attention.
+    Critical L1 gate for CC3's incoming `paged_attn_hd512_sm86` kernel."""
+    fix = load_fixture("paged_attn_hd512")
+    inp = {k: v.to(device) for k, v in fix["inputs"].items()}
+    fn = (
+        getattr(kernels, "paged_attn_hd512_sm86", None)
+        or getattr(kernels, "paged_attention_hd512", None)
+        or getattr(kernels, "paged_attn_hd512", None)
+    )
+    if fn is None:
+        pytest.skip("paged_attn_hd512 kernel not exported (CC3 lane in flight)")
+    out = fn(**inp, **fix["kwargs"])
+    assert_close(out, fix["expected"], rtol=2e-2, atol=2e-2, name="paged_attn_hd512")

@@ -188,6 +188,58 @@ def reference_sparse_attn_indexer_logits(
     return block_scores.float()
 
 
+def reference_paged_attn_hd512(
+    q: torch.Tensor,             # [B, H_q, 1, 512]
+    kv_cache: torch.Tensor,      # [num_blocks, block_size, 2, H_kv, 512]
+    block_table: torch.Tensor,   # [B, max_blocks_per_seq] int32
+    seq_lens: torch.Tensor,      # [B] int32
+    block_size: int = 16,
+    scale: float | None = None,
+) -> torch.Tensor:
+    """
+    Paged-KV attention reference for head_dim=512 (DSV4-Flash-FP8 / GLM-5.1).
+    Tracks vLLM PR #38835 paged_attn signature targeting CC3's
+    paged_attn_hd512_sm86 kernel. Algorithm-faithful, not bandwidth-faithful —
+    L1 numerics ground truth only.
+    Returns: [B, H_q, 1, 512] attended values.
+    """
+    if scale is None:
+        scale = 1.0 / math.sqrt(q.shape[-1])
+    q = q.float()
+    B, H_q, _, D = q.shape
+    H_kv = kv_cache.shape[3]
+    assert D == 512, f"reference_paged_attn_hd512 expects head_dim=512, got {D}"
+    assert H_q % H_kv == 0, "GQA group ratio must divide cleanly"
+    group = H_q // H_kv
+    out = torch.zeros((B, H_q, 1, D), dtype=torch.float32)
+    for bi in range(B):
+        seq_len = int(seq_lens[bi].item())
+        if seq_len <= 0:
+            continue
+        n_blocks_needed = (seq_len + block_size - 1) // block_size
+        block_ids = block_table[bi, :n_blocks_needed].tolist()
+        ks_pieces, vs_pieces = [], []
+        for blk_idx, blk in enumerate(block_ids):
+            if blk < 0:
+                continue
+            base = blk_idx * block_size
+            this_block_used = min(block_size, seq_len - base)
+            ks_pieces.append(kv_cache[blk, :this_block_used, 0, :, :].float())
+            vs_pieces.append(kv_cache[blk, :this_block_used, 1, :, :].float())
+        if not ks_pieces:
+            continue
+        K = torch.cat(ks_pieces, dim=0)        # [seq_len, H_kv, D]
+        V = torch.cat(vs_pieces, dim=0)
+        K = K.repeat_interleave(group, dim=1)
+        V = V.repeat_interleave(group, dim=1)
+        K_h = K.permute(1, 2, 0)                # [H_q, D, seq_len]
+        scores = torch.matmul(q[bi], K_h) * scale
+        attn = torch.softmax(scores, dim=-1)
+        V_h = V.permute(1, 0, 2)                # [H_q, seq_len, D]
+        out[bi] = torch.matmul(attn, V_h)
+    return out
+
+
 REFERENCES = {
     "sparse_attn_indexer": reference_sparse_attn_indexer,
     "sparse_attn_indexer_logits": reference_sparse_attn_indexer_logits,
@@ -195,6 +247,7 @@ REFERENCES = {
     "compressor": reference_compressor,
     "swa": reference_swa,
     "marlin_int4_gemm": reference_marlin_int4_gemm,
+    "paged_attn_hd512": reference_paged_attn_hd512,
 }
 
 
