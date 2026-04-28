@@ -1,0 +1,106 @@
+{
+  "agent": "CC6",
+  "role": "Correctness Gate (1500-prompt + numerics + perf-tier)",
+  "branch": "lane-cc6-gate",
+  "version": "1.0",
+  "last_updated": "2026-04-28T19:08:00Z",
+  "comment": "Programmatic capability manifest — CC0/CC9 read this to know what gate operations are available without scanning source.",
+
+  "prompts": {
+    "set_size": 1500,
+    "categories": ["factual", "mmlu_placeholder", "reasoning", "code", "summarization",
+                   "creative", "multilingual", "repetition", "edge"],
+    "deterministic_seed": 42,
+    "real_mmlu_via_env": "MMLU_DIR",
+    "generator": "tests/correctness/gen_prompts.py",
+    "output": "tests/correctness/prompts.jsonl"
+  },
+
+  "capture": {
+    "single": "tests/correctness/capture_one.py",
+    "orchestrator": "tests/correctness/baseline_capture.sh",
+    "metrics_emitted": ["TTFT_s", "TPOT_s", "ITL_p50/p95/p99", "PP_TPS", "TG_TPS",
+                        "wall_s", "prompt_tokens", "completion_tokens"],
+    "default_concurrency": 5,
+    "env_overrides": ["BASELINE_ENDPOINT", "BASELINE_MODEL", "BASELINE_OUT",
+                      "BASELINE_CONC", "BASELINE_LOGPROBS", "BASELINE_BACKEND",
+                      "BASELINE_STREAM", "BASELINE_TIMEOUT"]
+  },
+
+  "gates": {
+    "primary_runner": "tests/correctness/verify_gate.py",
+    "thresholds": {
+      "top1_match_pct": 98.0,
+      "logit_cosine_min": 0.97,
+      "mmlu_perplexity_drop_pct_max": 2.0,
+      "word_jaccard_min_fallback": 0.95,
+      "long_ctx_recall_pct_min": 90.0
+    },
+    "perf_tiers_aggregate_tps": {"Bronze": 100, "Silver": 300, "Gold": 500,
+                                  "Platinum": 700, "Diamond": 900, "Cosmic": 1000},
+    "perf_tiers_conc1_tps": {"Bronze": 25, "Silver": 35, "Gold": 55,
+                              "Platinum": 65, "Diamond": 75}
+  },
+
+  "test_pyramid": {
+    "L0_cpu_reference": "tests/correctness/cpu_reference.py",
+    "L1_unit": "tests/unit/test_kernels_sm86.py + run_kernel_test.sh",
+    "L1_fixtures_generator": "tests/unit/gen_fixtures.py",
+    "L2_forward_slice": "tests/integration/test_l2_forward_slice.py + run_l2_forward_slice.sh",
+    "L3_small_model": "tests/integration/test_l3_small_model.py + run_l3_small_model.sh",
+    "L4_verdict": "tests/correctness/run_l4_verdict.sh",
+    "L4_daemon": "tests/correctness/l4_daemon.sh"
+  },
+
+  "secondary_gates": {
+    "grill_33": "tests/correctness/grill_33.sh + grill_33_gen.py",
+    "perplexity_full": "tests/correctness/perplexity_full.py",
+    "long_ctx_regression": "tests/correctness/long_ctx_regression.sh + score_long_ctx.py + gen_long_ctx_prompts.py",
+    "tier_classify": "tests/correctness/tier_classify.py"
+  },
+
+  "ops_tooling": {
+    "ship_l4_capture": "tests/correctness/ship_l4_capture.sh — single CC9 entrypoint (auto-detect json|jsonl, chain grill+longctx)",
+    "endpoint_health_daemon": "tests/correctness/endpoint_health_daemon.sh — bridge endpoint_health UP|DOWN",
+    "profile_to_jsonl": "tests/correctness/profile_to_jsonl.py — CC9 profile JSON → gate JSONL",
+    "merge_captures": "tests/correctness/merge_captures.py — N rank captures → canonical",
+    "validate_jsonl": "tests/correctness/validate_jsonl.py prompts|capture",
+    "summarize_captures": "tests/correctness/summarize_captures.py",
+    "compare_revs": "tests/correctness/compare_revs.py — baseline vs N under-test side-by-side",
+    "test_gate_self": "tests/correctness/test_gate_self.sh — 5 self-tests prove gate distinguishes PASS|FAIL",
+    "coverage_matrix": "tests/correctness/coverage_matrix.py — kernel x test-tier audit",
+    "aggregate_l4_history": "tests/correctness/aggregate_l4_history.py — verdict trend CSV+md",
+    "cc6_daily_status": "tests/correctness/cc6_daily_status.py — 24h bridge digest",
+    "bridge_helper": "tests/correctness/bridge_helper.py — DRY bridge poster module + CLI"
+  },
+
+  "bridge_topics_emitted": [
+    "story_complete", "milestone", "blocker", "warning",
+    "l4_result", "l4_shipped", "tier_result", "grill_result", "longctx_result",
+    "endpoint_health", "daily_status", "backlog_done", "backlog_pruned"
+  ],
+
+  "bridge_topics_consumed": [
+    "l4_capture_ready",
+    "next_dispatch_CC6"
+  ],
+
+  "outputs_to_comms_dir": [
+    "CC6_GATE_RESULTS_<integ>.md",
+    "CC6_GRILL33_<integ>.md",
+    "CC6_LONGCTX_<integ>.md",
+    "CC6_PERPLEXITY_<integ>.md",
+    "CC6_TIER_<integ>.md",
+    "CC6_COVERAGE_MATRIX.md",
+    "CC6_DAILY_STATUS.md",
+    "CC6_HISTORY.md",
+    "CC6_HISTORY.csv",
+    "CC6_STATUS.md"
+  ],
+
+  "constraints": {
+    "ssh_parity": "CC6 ssh limited to cuda6 only (per LEAD §6)",
+    "branch_lane": "all commits to lane-cc6-* via cc_git.sh Tool 5",
+    "shared_repo_race_aware": "single working tree shared across CC1-CC9; rogue files may appear in commits via git add -A — best-effort filter via specific git add"
+  }
+}
