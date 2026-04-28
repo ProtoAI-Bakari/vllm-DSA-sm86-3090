@@ -1,0 +1,99 @@
+# --ProtoAI-Bakari--
+# Flight-deck profile: dsv4-int4-mtp-tp2-ep8
+# Target: DeepSeek-V4-Flash INT4-AWQ + MTP (Multi-Token Prediction) head wired.
+# Pre-author for EPIC 3.2 — fires after EPIC 3.1 INT4 PASS + CC4 MTP wire-up.
+# Expected uplift: +1.5-2x decode throughput per corpus §EPIC 3.2.
+# Numerics gate: identical tokens at temp=0 with MTP on vs off (deterministic).
+profile_name: dsv4-int4-mtp-tp2-ep8
+
+model:
+  hf_id: deepseek-ai/DeepSeek-V4-Flash-AWQ-INT4
+  arch: deepseek-v4
+  experts_total: 256
+  experts_active: 8
+  quant: int4_awq
+  quant_method: marlin
+  approx_weight_gib: 68
+  speculative:
+    method: mtp                        # DSV4 native multi-token prediction head
+    num_speculative_tokens: 4          # decoder generates 4 tokens per fwd
+    target_acceptance_rate: 0.7        # below this, MTP costs more than it saves
+    verify_via: target_model            # reject non-matching draft tokens
+
+parallelism:
+  tensor_parallel_size: 2
+  expert_parallel_size: 8
+  pipeline_parallel_size: 1
+  data_parallel_size: 1
+  total_ranks: 16
+
+server:
+  port: 8000
+  host: 0.0.0.0
+  served_model_name: dsv4-int4-mtp
+
+kv_cache:
+  dtype: fp8                            # FP8 KV; INT8 KV variant is separate profile
+  block_size: 16
+  swap_space_gib: 0
+
+memory:
+  gpu_memory_utilization: 0.90
+  max_model_len: 32768
+  max_num_seqs: 256
+  max_num_batched_tokens: 8192
+
+attention:
+  prefix_cache: true
+  enable_chunked_prefill: true
+  sparse_attn_indexer: enabled
+  mla_sparse: enabled
+
+nodes:
+  layout: zccx_8x2
+  hosts: [cuda1, cuda2, cuda3, cuda4, cuda5, cuda6, cuda7, cuda8]
+  per_node_gpus: 2
+  cordon_unwanted: true
+  gid_index_normalize: true
+
+nccl:
+  debug: INFO
+  socket_ifname: bond0
+  ib_disable: 0
+  ib_gid_index: 3
+  p2p_disable: 0
+  net_gdr_level: 5
+
+env:
+  VLLM_USE_DEEP_GEMM: "0"
+  VLLM_USE_TRITON_FLASH_ATTN: "1"
+  VLLM_MARLIN_SM86: "1"
+  VLLM_USE_SPEC_DECODE: "1"
+  VLLM_SPEC_DECODE_NUM_LOOKAHEAD: "4"
+  VLLM_ATTENTION_BACKEND: ""
+  CUDA_DEVICE_MAX_CONNECTIONS: "32"
+  TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
+
+acceptance:
+  conc1_target_tier: gold               # 50-70 t/s realistic with MTP +1.5-2x
+  conc1_stretch_tier: platinum          # 65-90 t/s with all stars aligned
+  agg_target_conc4_tier: gold           # 350-500 t/s realistic
+  identical_tokens_temp0_mtp_on_vs_off: true   # deterministic gate
+  perplexity_drift_max: 0.005           # tighter than INT4 alone — MTP must not regress
+
+bench:
+  conc_sweep: [1, 2, 4, 8, 16, 32]
+  drain_between_conc: true
+  capture_nccl_fabric: true
+  capture_per_gpu_util: true
+  capture_kv_metrics: true
+  capture_mtp_acceptance_rate: true
+  output_dir: /Users/z/AGENT/bench_dsv4_int4_mtp_tp2_ep8
+
+artifact_out: /Users/z/AGENT/comms/PATH_A_FINAL_RESULTS_<datetime>.md
+
+dependencies:
+  blocked_on:
+    - epic_3_1_int4_awq_marlin_pass
+    - cc4_mtp_head_wire_up
+    - cc6_correctness_gate_pass_temp0_identical
