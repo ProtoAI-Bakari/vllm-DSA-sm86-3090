@@ -1,0 +1,71 @@
+From: ProtoAI-Bakari <prototypearchitect@gmail.com>
+Subject: [PATCH] silu_mul_fp8_quant_deep_gemm: gate Hopper kernel on sm_90 + CUDA >= 12.3
+Date: 2026-04-28T22:11Z
+
+The `silu_mul_fp8_quant_deep_gemm_kernel` template uses constexpr __nv_bfloat16
+arithmetic at lines 304-307 of csrc/quantization/activation_kernels.cu:
+
+  static constexpr __nv_bfloat16 fp8_min = get_fp8_min<fp8_type>();
+  static constexpr __nv_bfloat16 fp8_max = get_fp8_max<fp8_type>();
+  static constexpr __nv_bfloat16 EPS = (__nv_bfloat16_raw{.x = 11996});
+
+`__nv_bfloat16` ctor became constexpr in CUDA 12.3 cuda_bf16.hpp. CUDA 12.0
+fails with "non-constexpr ctor" → 18 errors per template instantiation
+(BLOCK_COUNT=4224, SMEM=16384, fp8_type=Float8_e4m3fn, etc).
+
+This kernel is a Hopper DeepGEMM pipeline (smem_size=16KB, NUM_STAGES=4,
+warpgroup-style staged compute). It is NOT used on sm_86 — Marlin INT4 +
+Triton fallback handle the equivalent path. Guarding the kernel template
++ host dispatcher under `__CUDA_ARCH__ >= 900` (device side) +
+`CUDA_VERSION >= 12030` (host side) skips the Hopper compile altogether
+on sm_86. Caller `persistent_masked_m_silu_mul_quant` wrapped in same
+host-side guard; emits TORCH_CHECK if invoked on unsupported arch.
+
+Refs:
+  - Build log: /home/z/cycle5_wheel_build.log lines for 18 constexpr errors
+  - Tech detail: /Users/z/AGENT/comms/TECH_DETAIL_CC9_BUILD_FAIL_CUDA120_20260428_2204.md
+
+Assisted-By: Claude Opus 4.7 (claude-opus-4-7) [1M ctx, max effort, agent: CC3]
+// --ProtoAI-Bakari--
+
+--- a/csrc/quantization/activation_kernels.cu
++++ b/csrc/quantization/activation_kernels.cu
+@@ -278,6 +278,9 @@
+ template <int BLOCK_COUNT, int SMEM_SIZE_BYTES_Y, typename fp8_type,
+           typename scale_t, int THREADS, typename Idx_t, bool CEIL_UE8M0,
+           int GROUP_SIZE = 128, int NUM_STAGES = 3>
++// CC3 sm_86 guard: kernel uses constexpr __nv_bfloat16 ctor (CUDA 12.3+) +
++// is Hopper DeepGEMM-staged. Skip on sm < 9.0 / CUDA < 12.3.
++#if (defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900) && (CUDA_VERSION >= 12030)
+ __global__ void silu_mul_fp8_quant_deep_gemm_kernel(
+     const __nv_bfloat16* __restrict__ _input, fp8_type* __restrict__ _y_q,
+     scale_t* __restrict__ _y_s, const int32_t* __restrict__ tokens_per_expert,
+@@ -437,6 +440,7 @@
+   }
+ #endif
+ }
++#endif  // __CUDA_ARCH__ >= 900 && CUDA_VERSION >= 12030
+
+@@ -596,6 +600,7 @@
+ void persistent_masked_m_silu_mul_quant(
+     const at::Tensor& input,              // (E, T, 2*H)
+     const at::Tensor& tokens_per_expert,  // (E)
+     at::Tensor& y_q,                      // (E, T, H) [OUT]
+     at::Tensor& y_s,                      // (E, T, H//group_size) [OUT]
+     bool cast_scale_ue8m0) {
++#if defined(CUDA_VERSION) && CUDA_VERSION >= 12030
+ #ifndef USE_ROCM
+
+   // This kernel currently only supports H % 128 == 0 and assumes a
+@@ -700,6 +705,11 @@
+   #undef KERNEL
+   #undef LAUNCH_ON_H
+ #endif
++#else
++  TORCH_CHECK(false,
++      "silu_mul_fp8_quant_deep_gemm requires CUDA >= 12.3 (Hopper DeepGEMM "
++      "pipeline). On sm_86 + CUDA 12.0, use Marlin INT4 / Triton fallback.");
++#endif  // CUDA_VERSION >= 12030
+ }
+--
+2.43.0
