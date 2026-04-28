@@ -2,19 +2,18 @@
 # Flight-deck profile: dsv4-flash-fp8-tp2-ep8
 # Target: DeepSeek-V4-Flash-FP8 on ZCCX 16x RTX 3090 (8 nodes x 2 GPUs)
 # Topology: TP=2 within node, EP=8 across nodes
-# Source: cc8 STORY_BACKLOG #1, corpus topology §3
-# NOTE: native FP8 [128,128] block-scaled GEMM unavailable on sm_86 (Hopper DEEP_GEMM only).
-#       BF16-emulation path = 10-20 t/s aggregate ceiling (physics-bound, AO1 audit).
-#       INT4-AWQ-Marlin sm_86 backport (EPIC 3.1) is the real perf path.
+# NOTE: native FP8 [128,128] block-scaled GEMM unavailable on sm_86.
+#       BF16-emul = 10-20 t/s aggregate ceiling.
+#       INT4-AWQ-Marlin sm_86 (EPIC 3.1) is the real perf path.
 profile_name: dsv4-flash-fp8-tp2-ep8
 
 model:
   hf_id: deepseek-ai/DeepSeek-V4-Flash-FP8
   arch: deepseek-v4
   experts_total: 256
-  experts_active: 8           # EP=8 exact fit
-  quant: fp8                   # native; emulated via BF16 on Ampere until INT4 ships
-  approx_weight_gib: 274       # full DSV4-Flash-FP8 weight
+  experts_active: 8
+  quant: fp8
+  approx_weight_gib: 274
 
 parallelism:
   tensor_parallel_size: 2
@@ -31,18 +30,18 @@ server:
 kv_cache:
   dtype: fp8
   block_size: 16
-  swap_space_gib: 5             # +5 GB CPU offload to fit BF16 emul activation
+  swap_space_gib: 5
 
 memory:
-  gpu_memory_utilization: 0.92  # tighter than GLM since DSV4 weight is heavier
+  gpu_memory_utilization: 0.92
   max_model_len: 32768
   max_num_seqs: 128
-  max_num_batched_tokens: 4096  # smaller batch on heavier weight
+  max_num_batched_tokens: 4096
 
 attention:
   prefix_cache: true
   enable_chunked_prefill: true
-  sparse_attn_indexer: enabled  # requires CC3+CC4 sm_86 kernel rebuild
+  sparse_attn_indexer: enabled
   mla_sparse: enabled
 
 nodes:
@@ -68,9 +67,9 @@ env:
   TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
 
 acceptance:
-  conc1_target_tier_bf16_emul: below_bronze   # 10-20 t/s physics ceiling
-  conc1_target_tier_int4: silver              # 35-50 t/s post-CC5 INT4-AWQ-Marlin
-  agg_target_conc4_int4_tier: silver          # 200-300 t/s realistic post-INT4
+  conc1_target_tier_bf16_emul: below_bronze
+  conc1_target_tier_int4: silver
+  agg_target_conc4_int4_tier: silver
   top1_agreement_vs_pp_baseline: 0.98
   cosine_min: 0.97
   perplexity_drift_max: 0.02
@@ -81,7 +80,7 @@ bench:
   capture_nccl_fabric: true
   capture_per_gpu_util: true
   capture_kv_metrics: true
-  output_dir: /tmp/bench_dsv4_tp2_ep8
+  output_dir: /Users/z/AGENT/bench_dsv4_tp2_ep8
 
 artifact_out: /Users/z/AGENT/comms/PATH_A_FINAL_RESULTS_<datetime>.md
 
@@ -89,6 +88,6 @@ dependencies:
   blocked_on:
     - cc3_sparse_attn_indexer_sm86
     - cc4_lightning_bundle_sm86
-    - cc5_int4_awq_marlin_sm86   # for non-trivial perf
+    - cc5_int4_awq_marlin_sm86
     - cc6_correctness_gate_pass
     - cc7_cluster_fanout

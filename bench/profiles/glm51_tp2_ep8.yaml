@@ -9,13 +9,13 @@ model:
   hf_id: zai-org/GLM-5.1-IQ2_XXS
   arch: glm-5.1
   experts_total: 256
-  experts_active: 8           # EP=8 is exact fit (one shard per node-pair)
+  experts_active: 8
   quant: iq2_xxs
-  approx_weight_gib: 96       # IQ2_XXS GLM-5.1 estimate; final per-rank from EP shard
+  approx_weight_gib: 96
 
 parallelism:
-  tensor_parallel_size: 2     # NVLink within Mac Pro node
-  expert_parallel_size: 8     # across 8 ZCCX nodes
+  tensor_parallel_size: 2
+  expert_parallel_size: 8
   pipeline_parallel_size: 1
   data_parallel_size: 1
   total_ranks: 16
@@ -26,15 +26,15 @@ server:
   served_model_name: glm51-iq2xxs
 
 kv_cache:
-  dtype: fp8                   # halves KV bandwidth, ~1% perplexity tax
+  dtype: fp8
   block_size: 16
-  swap_space_gib: 0            # no CPU-offload at launch; revisit per-bench
+  swap_space_gib: 0
 
 memory:
   gpu_memory_utilization: 0.90
   max_model_len: 32768
-  max_num_seqs: 256            # tune per conc-sweep result
-  max_num_batched_tokens: 8192 # initial; sweep this knob
+  max_num_seqs: 256
+  max_num_batched_tokens: 8192
 
 attention:
   prefix_cache: true
@@ -44,26 +44,26 @@ nodes:
   layout: zccx_8x2
   hosts: [cuda1, cuda2, cuda3, cuda4, cuda5, cuda6, cuda7, cuda8]
   per_node_gpus: 2
-  cordon_unwanted: true        # kubectl cordon non-cuda* before launch
-  gid_index_normalize: true    # RoCEv2 prereq
+  cordon_unwanted: true
+  gid_index_normalize: true
 
 nccl:
   debug: INFO
-  socket_ifname: bond0         # 100 GbE RoCEv2 bond
+  socket_ifname: bond0
   ib_disable: 0
-  ib_gid_index: 3              # normalized RoCEv2 GID
+  ib_gid_index: 3
   p2p_disable: 0
   net_gdr_level: 5
 
 env:
-  VLLM_USE_DEEP_GEMM: "0"      # sm_86 cannot run Hopper DEEP_GEMM
-  VLLM_ATTENTION_BACKEND: ""   # let vLLM select sm_86 backend
+  VLLM_USE_DEEP_GEMM: "0"
+  VLLM_ATTENTION_BACKEND: ""
   CUDA_DEVICE_MAX_CONNECTIONS: "32"
   TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
 
 acceptance:
-  conc1_target_tier: bronze    # 25 t/s realistic (corpus §8.2)
-  agg_target_conc4_tier: bronze # 100 t/s; stretch silver 300 conc=8
+  conc1_target_tier: bronze
+  agg_target_conc4_tier: bronze
   top1_agreement_vs_pp_baseline: 0.98
   cosine_min: 0.97
   perplexity_drift_max: 0.02
@@ -74,6 +74,6 @@ bench:
   capture_nccl_fabric: true
   capture_per_gpu_util: true
   capture_kv_metrics: true
-  output_dir: /tmp/bench_glm51_tp2_ep8
+  output_dir: /Users/z/AGENT/bench_glm51_tp2_ep8
 
 artifact_out: /Users/z/AGENT/comms/PATH_A_FINAL_RESULTS_<datetime>.md

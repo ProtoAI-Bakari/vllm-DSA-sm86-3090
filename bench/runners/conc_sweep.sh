@@ -8,13 +8,10 @@
 #     --endpoint http://cuda1:8000 \
 #     --model glm51-iq2xxs \
 #     --concs 1,2,4,8,16,32 \
-#     --prompts 64 \
-#     --max-tokens 256 \
-#     --out /tmp/bench_glm51_tp2_ep8/conc_sweep_<ts>.jsonl
+#     --prompts 64 --max-tokens 256
 #
-# Exits non-zero if endpoint not /v1/models 200 + ready:true at start.
-# Drains the engine between concurrency steps via /v1/health-and-drain (vLLM
-# >= 0.20.0 has best-effort drain) plus a 30s settle window.
+# Aborts non-zero if endpoint not /v1/models 200 + /health 200 at start.
+# 30s settle window between concurrency steps for KV drain.
 
 set -euo pipefail
 
@@ -57,25 +54,25 @@ done
 
 [[ -z "$MODEL" ]] && { echo "missing --model" >&2; usage; }
 TS=$(date +%Y%m%dT%H%M%SZ)
-[[ -z "$OUT" ]] && OUT="/tmp/bench_${MODEL}_conc_sweep_${TS}.jsonl"
+[[ -z "$OUT" ]] && OUT="${HOME}/AGENT/bench_${MODEL}_conc_sweep_${TS}.jsonl"
 mkdir -p "$(dirname "$OUT")"
 
 log() { printf '[conc_sweep %s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
-# 1. Pre-flight: endpoint must be HEALTHY before first sweep step.
+# Pre-flight: endpoint must be HEALTHY before first sweep step.
 log "preflight: $ENDPOINT/v1/models"
-HTTP_CODE=$(curl -s -o /tmp/cs_models.json -w '%{http_code}' --max-time 10 "$ENDPOINT/v1/models" || echo 000)
+HTTP_CODE=$(curl -s -o "${HOME}/AGENT/_cs_models.json" -w '%{http_code}' --max-time 10 "$ENDPOINT/v1/models" || echo 000)
 if [[ "$HTTP_CODE" != "200" ]]; then
   echo "ABORT: $ENDPOINT/v1/models returned $HTTP_CODE (need 200)" >&2
   exit 3
 fi
-HEALTH_CODE=$(curl -s -o /tmp/cs_health.json -w '%{http_code}' --max-time 10 "$ENDPOINT/health" || echo 000)
+HEALTH_CODE=$(curl -s -o "${HOME}/AGENT/_cs_health.json" -w '%{http_code}' --max-time 10 "$ENDPOINT/health" || echo 000)
 [[ "$HEALTH_CODE" == "200" ]] || { echo "ABORT: /health $HEALTH_CODE" >&2; exit 3; }
 log "preflight OK (models=$HTTP_CODE health=$HEALTH_CODE)"
 
-# 2. Build prompt set (deterministic seed for reproducibility)
-PROMPT_TMP=$(mktemp)
-trap 'rm -f "$PROMPT_TMP" /tmp/cs_models.json /tmp/cs_health.json' EXIT
+# Build prompt set (deterministic seed for reproducibility)
+PROMPT_TMP="${HOME}/AGENT/_cs_prompts_${TS}.jsonl"
+trap 'rm -f "$PROMPT_TMP" "${HOME}/AGENT/_cs_models.json" "${HOME}/AGENT/_cs_health.json"' EXIT
 if [[ -n "$PROMPTS_FILE" ]]; then
   cp "$PROMPTS_FILE" "$PROMPT_TMP"
 else
@@ -100,17 +97,20 @@ fi
 NPROMPT=$(wc -l < "$PROMPT_TMP" | tr -d ' ')
 log "prompt set ready: $NPROMPT prompts in $PROMPT_TMP"
 
-# 3. Warm-up at conc=1 to fill prefix cache + JIT paths
+# Warm-up
 log "warmup: $WARMUP_PROMPTS sequential prompts at conc=1"
-head -n "$WARMUP_PROMPTS" "$PROMPT_TMP" | while IFS= read -r line; do
+WARM_FILE="${HOME}/AGENT/_cs_warm_${TS}.jsonl"
+head -n "$WARMUP_PROMPTS" "$PROMPT_TMP" > "$WARM_FILE" || true
+while IFS= read -r line; do
   P=$(echo "$line" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["prompt"])')
   curl -s --max-time "$TIMEOUT_S" \
     -H 'Content-Type: application/json' \
     -d "$(python3 -c "import json; print(json.dumps({'model':'$MODEL','prompt':'$P','max_tokens':$MAX_TOKENS,'temperature':0}))")" \
     "$ENDPOINT/v1/completions" > /dev/null || log "warmup prompt failed (continuing)"
-done
+done < "$WARM_FILE"
+rm -f "$WARM_FILE"
 
-# 4. Sweep
+# Sweep
 IFS=',' read -ra CONC_ARR <<< "$CONCS"
 echo -n "" > "$OUT"
 for CONC in "${CONC_ARR[@]}"; do
@@ -120,8 +120,8 @@ for CONC in "${CONC_ARR[@]}"; do
   : > "$STEP_OUT"
 
   python3 - "$ENDPOINT" "$MODEL" "$CONC" "$MAX_TOKENS" "$PROMPT_TMP" "$STEP_OUT" "$TIMEOUT_S" <<'PY'
-import asyncio, json, os, sys, time
-import urllib.request, urllib.error
+import json, sys, time
+import urllib.request
 
 endpoint, model, conc, max_tokens, prompt_file, out_path, timeout = sys.argv[1:8]
 conc = int(conc); max_tokens = int(max_tokens); timeout = float(timeout)
@@ -175,7 +175,6 @@ summary = {"conc": conc, "n_prompts": len(prompts), "n_ok": len(ok), "n_err": le
 print(json.dumps(summary))
 PY
 
-  STEP_SUMMARY=$(tail -n 1 "$STEP_OUT" 2>/dev/null || echo "{}")
   STEP_END=$(date +%s.%N)
   STEP_WALL=$(python3 -c "print(round($STEP_END - $STEP_START, 3))")
   echo "{\"ts\": \"$(date -u +%FT%TZ)\", \"profile_endpoint\": \"$ENDPOINT\", \"model\": \"$MODEL\", \"conc\": $CONC, \"step_wall_s\": $STEP_WALL, \"raw\": \"$STEP_OUT\"}" >> "$OUT"
