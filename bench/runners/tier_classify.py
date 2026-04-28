@@ -35,8 +35,8 @@ CONC1_TIERS = [
 def classify(value: float, ladder: list[tuple[str, float]]) -> dict:
     for name, threshold in ladder:
         if value >= threshold:
-            higher = next((n for n, t in ladder if t > threshold), None)
-            higher_th = next((t for n, t in ladder if t > threshold), None)
+            higher_pairs = sorted([(n, t) for n, t in ladder if t > threshold], key=lambda x: x[1])
+            higher, higher_th = (higher_pairs[0] if higher_pairs else (None, None))
             return {
                 "tier": name,
                 "value": value,
