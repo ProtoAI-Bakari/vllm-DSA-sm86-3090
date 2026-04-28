@@ -1,0 +1,63 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Build artifacts ---
+build/
+dist/
+*.so
+*.cu.o
+*.ptx
+*.fatbin
+*.cubin
+*.o
+*.a
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+.ccache/
+.cache/
+
+# --- Virtual environments ---
+.venv/
+.venv-*/
+venv/
+env/
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+*~
+
+# --- Bench/test artifacts (large, regenerable) ---
+bench/results/raw/
+bench/results/*.jsonl
+tests/correctness/baseline.jsonl
+tests/correctness/under_test.jsonl
+tests/**/_tmp_*
+
+# --- vLLM source (cloned by build script, not vendored) ---
+vendor/vllm/
+vendor/vllm-*/
+
+# --- Secrets / local config ---
+.env
+.env.local
+*.pem
+*.key
+authpass
+
+# --- Logs ---
+*.log
+logs/

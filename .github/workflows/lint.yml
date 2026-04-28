@@ -1,0 +1,55 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: ruff check
+        run: ruff check . || true  # advisory until codebase stabilizes
+
+      - name: ruff format check
+        run: ruff format --check . || true  # advisory until codebase stabilizes
+
+  shell-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: shellcheck
+        run: |
+          find scripts/ tests/ -name "*.sh" -print0 | xargs -0 -r shellcheck || true
+
+  attribution-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify no Co-Authored-By Claude in commit messages
+        run: |
+          if git log --all --pretty=%B | grep -E "^Co-Authored-By:.*[Cc]laude"; then
+            echo "ERROR: Found 'Co-Authored-By: Claude*' in commit history."
+            echo "Per CONTRIBUTING.md, AI assistance uses 'Assisted-By:' trailer instead."
+            exit 1
+          fi
+          echo "OK: no offending Co-Authored-By trailers."

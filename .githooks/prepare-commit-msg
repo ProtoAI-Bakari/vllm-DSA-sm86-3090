@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# .githooks/prepare-commit-msg
+#
+# Enforces vllm-DSA-sm86-3090 attribution policy (per CONTRIBUTING.md):
+#   - Rewrites `Co-Authored-By: Claude*` -> `Assisted-By: Claude Opus 4.7 ...`
+#   - Leaves human Co-Authored-By trailers untouched.
+#
+# Activation:
+#   git config --local core.hooksPath .githooks
+#
+# Authored by ProtoAI-Bakari, with Assistance by Claude Opus 4.7 (claude-opus-4-7) [1M ctx, max effort]
+
+set -euo pipefail
+
+COMMIT_MSG_FILE="$1"
+
+# Default agent is CC0 (orchestrator). Override per-agent by exporting CC_AGENT_ID.
+AGENT_ID="${CC_AGENT_ID:-CC0}"
+
+REPLACEMENT="Assisted-By: Claude Opus 4.7 (claude-opus-4-7) [1M ctx, max effort, agent: ${AGENT_ID}]"
+
+# 1. Rewrite any Co-Authored-By: Claude* trailer to the Assisted-By form.
+if /usr/bin/grep -qE '^Co-Authored-By: Claude' "$COMMIT_MSG_FILE"; then
+  /usr/bin/sed -i.bak -E "s|^Co-Authored-By: Claude.*$|${REPLACEMENT}|" "$COMMIT_MSG_FILE"
+  /bin/rm -f "${COMMIT_MSG_FILE}.bak"
+fi
+
+# 2. If no Assisted-By trailer is present and the commit was made via an LLM agent
+#    (CC_AGENT_ID set), append one.
+if [[ -n "${CC_AGENT_ID:-}" ]]; then
+  if ! /usr/bin/grep -qE '^Assisted-By: Claude' "$COMMIT_MSG_FILE"; then
+    # Append blank line + Assisted-By trailer at end of message.
+    /usr/bin/printf '\n%s\n' "$REPLACEMENT" >> "$COMMIT_MSG_FILE"
+  fi
+fi
+
+exit 0
