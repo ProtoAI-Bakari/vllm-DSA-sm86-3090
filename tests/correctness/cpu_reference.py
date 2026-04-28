@@ -163,8 +163,42 @@ def reference_marlin_int4_gemm(
     return (x_bf16.float() @ w).to(x_bf16.dtype)
 
 
+def reference_sparse_attn_indexer_logits(
+    q: torch.Tensor,             # [B, H, T_q, D]   bf16/fp16/fp32
+    k_cache: torch.Tensor,       # [B, T_k, D]      bf16/fp16/fp32 (single kv head, MQA)
+    block_size: int = 64,
+    scale: float | None = None,
+) -> torch.Tensor:
+    """CPU reference for sparse_attn_indexer_sm86.cu BLOCK-SCORE LOGITS output.
+
+    Mirrors the kernel: per (batch, head, query, key_block) score is the
+    sum over (k in block, d in head_dim) of q[d] * k[blk,k,d] * scale.
+    Returns: [B, H, T_q, n_blocks] fp32 (matches kernel block_scores buffer).
+
+    Use this for Story 7 numerics gate vs the sm_86 .cu output. Acceptance:
+    max-abs-diff < 1e-3 in bf16-acc / fp32-acc paths, cosine >= 0.97 elementwise.
+    """
+    if scale is None:
+        scale = 1.0 / math.sqrt(q.shape[-1])
+    q = q.float()
+    k = k_cache.float()
+    B, H, T_q, D = q.shape
+    _, T_k, _ = k.shape
+    n_blocks = (T_k + block_size - 1) // block_size
+    pad = n_blocks * block_size - T_k
+    if pad:
+        k = F.pad(k, (0, 0, 0, pad), value=0.0)  # zero-pad K-rows in last block
+    # k -> [B, n_blocks, block_size, D]
+    k_blk = k.view(B, n_blocks, block_size, D)
+    # logits[b,h,q,blk] = sum_{d, k_in_blk} q[b,h,q,d] * k[b,blk,k_in_blk,d] * scale
+    # Expand q across n_blocks and k_in_blk via einsum.
+    block_scores = torch.einsum("bhqd,bnkd->bhqn", q, k_blk) * scale
+    return block_scores.float()
+
+
 REFERENCES = {
     "sparse_attn_indexer": reference_sparse_attn_indexer,
+    "sparse_attn_indexer_logits": reference_sparse_attn_indexer_logits,
     "mla_decode": reference_mla_decode,
     "compressor": reference_compressor,
     "swa": reference_swa,
